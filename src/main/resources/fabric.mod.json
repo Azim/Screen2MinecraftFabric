@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "id": "screen2mc",
+  "version": "${version}",
+
+  "name": "Screen2Minecraft",
+  "description": "This mod allows you to stream your screen to your minecraft server",
+  "authors": [
+    "Chicken-E",
+    "Azim"
+  ],
+  "contact": {
+    "homepage": "https://github.com/Chicken-E/Screen2Minecraft",
+    "sources": "https://github.com/Chicken-E/Screen2Minecraft"
+  },
+
+  "license": "CC0-1.0",
+  "icon": "assets/screen2mc/icon.png",
+
+  "environment": "*",
+  "entrypoints": {
+    "server": [
+      "icu.azim.screen2mc.Screen2Minecraft"
+    ]
+  },
+  "mixins": [
+    "screen2mc.mixins.json"
+  ],
+
+  "depends": {
+    "fabricloader": ">=0.7.4",
+    "fabric": "*",
+    "minecraft": "1.16.x"
+  },
+  "suggests": {
+    "flamingo": "*"
+  }
+}
