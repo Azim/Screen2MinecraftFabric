@@ -22,6 +22,7 @@ import com.mojang.authlib.minecraft.MinecraftSessionService;
 import com.mojang.datafixers.DataFixer;
 
 import icu.azim.screen2mc.ColorUtils;
+import icu.azim.screen2mc.Screen2Minecraft;
 import net.fabricmc.fabric.api.network.ServerSidePacketRegistry;
 import net.minecraft.block.BlockState;
 import net.minecraft.network.packet.s2c.play.MapUpdateS2CPacket;
@@ -48,6 +49,9 @@ public class ScreenMixin {
 	private ColorUtils colors;
 	private Rectangle screenRect = new Rectangle(0, 0, 1920, 1080);
 	private BufferedImage old;
+	
+	private double scalex, scaley;
+	private int offsetx, offsety, offsetz;
 
 	@Inject(at = @At("RETURN"), method = "<init>(Ljava/lang/Thread;Lnet/minecraft/util/registry/DynamicRegistryManager$Impl;Lnet/minecraft/world/level/storage/LevelStorage$Session;Lnet/minecraft/world/SaveProperties;Lnet/minecraft/resource/ResourcePackManager;Ljava/net/Proxy;Lcom/mojang/datafixers/DataFixer;"
 			+ "Lnet/minecraft/resource/ServerResourceManager;Lcom/mojang/authlib/minecraft/MinecraftSessionService;Lcom/mojang/authlib/GameProfileRepository;Lnet/minecraft/util/UserCache;Lnet/minecraft/server/WorldGenerationProgressListenerFactory;)V")
@@ -59,6 +63,11 @@ public class ScreenMixin {
 		try {
 			screen = new Robot();
 			colors = new ColorUtils();
+			scalex = 1920/Screen2Minecraft.blockCanvasSize.getLeft();
+			scaley = 1080/Screen2Minecraft.blockCanvasSize.getRight();
+			offsetx = (int) Screen2Minecraft.blockCanvasOffset.x;
+			offsety = (int) Screen2Minecraft.blockCanvasOffset.y;
+			offsetz = (int) Screen2Minecraft.blockCanvasOffset.z;
 			System.out.println("Started screen capture");
 		} catch (AWTException e) {
 			e.printStackTrace();
@@ -68,22 +77,32 @@ public class ScreenMixin {
 	//inject before each  tick
 	@Inject(at = @At("HEAD"), method = "tick(Ljava/util/function/BooleanSupplier;)V")
 	protected void tick(BooleanSupplier shouldKeepTicking, CallbackInfo info) {
-		if (screen == null)
-			return;
-		if (world == null)
-			world = worlds.get(World.OVERWORLD);
-		if (world == null)
-			return;
-		if (world.getPlayers().isEmpty())
-			return;
+		if (screen == null) return;
+		if (world == null) world = worlds.get(World.OVERWORLD);
+		if (world == null) return;
+		if (world.getPlayers().isEmpty()) return;
 		BufferedImage img = screen.createScreenCapture(screenRect);
 		if (old == null) {
 			old = img;
 			return;
 		}
 		// block canvas  
-		/*
-			int y = 4; // 256 x 144 <- 1920 x 1080
+		if(!Screen2Minecraft.mapmode) {
+			int y = offsety; // 256 x 144 <- 1920 x 1080
+			for(int z = offsetz; z < Screen2Minecraft.blockCanvasSize.getRight()+offsetz; z++) {
+				for(int x = offsetx; x < Screen2Minecraft.blockCanvasSize.getLeft()+offsetx;x++) {
+					int canvasx = (int)(x * scalex);
+					int canvasy = (int)(z * scaley);
+					
+					int color = img.getRGB(canvasx, canvasy);
+					if (color == old.getRGB(canvasx, canvasy)) { //blocks match
+						continue;
+					}
+					BlockState state = colors.findClosest(new Color(color));
+					world.setBlockState(new BlockPos(x, y, z), state);
+				}
+			}
+			/*
 			for (int zchunk = 0; zchunk < 9; zchunk++) {
 				for (int xchunk = 0; xchunk < 16; xchunk++) {
 					//WorldChunk chunk = world.getChunk(xchunk, zchunk); //changed to use  world instead, since clients didnt see changes  
@@ -104,34 +123,37 @@ public class ScreenMixin {
 						}
 					}
 				}
-			}
-		}
-		*/
-		//map canvas
-		//requires 15x9 map display filled from left to right from bottom to top
-		List<ServerPlayerEntity> players = world.getPlayers();
-		for (int x = 0; x < 15; x++) {
-			for (int y = 0; y < 9; y++) {
-				byte[] colors = new byte[128 * 128];
-				int segmentx = x * 128;
-				int segmenty = y * 128;
-				for (int lx = 0; lx < 128; lx++) { // width
-					for (int ly = 0; ly < 128; ly++) { // height
-						int index = lx + ly * 128;
-						if (ly + segmenty < 1080 && lx + segmentx < 1920) {
-							colors[index] = this.colors.findClosestByte(new Color(img.getRGB(lx + segmentx, ly + segmenty)));
-						} else { //outside of the screenshot but still inside of the canvas
-							colors[index] = 119;
+			}*/
+		}else {
+			//map canvas
+			//requires 15x9 map display filled from left to right from bottom to top
+			List<ServerPlayerEntity> players = world.getPlayers();
+			for (int x = 0; x < 15; x++) {
+				for (int y = 0; y < 9; y++) {
+					byte[] colors = new byte[128 * 128];
+					int segmentx = x * 128;
+					int segmenty = y * 128;
+					for (int lx = 0; lx < 128; lx++) { // width
+						for (int ly = 0; ly < 128; ly++) { // height
+							int index = lx + ly * 128;
+							if (ly + segmenty < 1080 && lx + segmentx < 1920) {
+								colors[index] = this.colors.findClosestByte(new Color(img.getRGB(lx + segmentx, ly + segmenty)));
+							} else { //outside of the screenshot but still inside of the canvas
+								colors[index] = 119;
+							}
 						}
 					}
+					MapUpdateS2CPacket packet = new MapUpdateS2CPacket(getMapId(x,y), (byte) 3, false, false, Collections.emptyList(), colors, 0, 0, 128, 128);
+					players.forEach(p -> {
+						ServerSidePacketRegistry.INSTANCE.sendToPlayer(p, packet);
+					});
 				}
-				MapUpdateS2CPacket packet = new MapUpdateS2CPacket(x + (8 - y) * 15, (byte) 3, false, false,
-						Collections.emptyList(), colors, 0, 0, 128, 128);
-				players.forEach(p -> {
-					ServerSidePacketRegistry.INSTANCE.sendToPlayer(p, packet);
-				});
 			}
 		}
 		old = img;
+	}
+	
+	private int getMapId(int x, int y) {
+		return  Screen2Minecraft.mapIdOffset + x + (8 - y) * 15;
 	}
 }
